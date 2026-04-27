@@ -7,6 +7,31 @@ import {
   SSENetworkEntry,
 } from './model';
 
+const GQL_OPERATION_RE = /^\s*(?:query|mutation|subscription)\s+(\w+)/m;
+
+const extractGraphQLOperationName = (
+  postData: HttpNetworkEntry['request']['body'],
+  url: string,
+): string | null => {
+  try {
+    const { pathname } = new URL(url);
+    if (!pathname.endsWith('/graphql') && !pathname.includes('/graphql/')) {
+      return null;
+    }
+    if (!postData || postData.type !== 'application/json') return null;
+    const body =
+      typeof postData.data === 'string'
+        ? JSON.parse(postData.data)
+        : postData.data;
+    if (typeof body !== 'object' || !body?.query) return null;
+    if (body.operationName) return body.operationName as string;
+    const match = GQL_OPERATION_RE.exec(body.query as string);
+    return match?.[1] ?? 'Anonymous';
+  } catch {
+    return null;
+  }
+};
+
 export const getProcessedRequests = memoize((state: NetworkActivityState) => {
   const { networkEntries } = state;
   const requests: ProcessedRequest[] = [];
@@ -14,10 +39,15 @@ export const getProcessedRequests = memoize((state: NetworkActivityState) => {
   for (const entry of networkEntries.values()) {
     if (entry.type === 'http') {
       const httpEntry = entry as HttpNetworkEntry;
+      const gqlName = extractGraphQLOperationName(
+        httpEntry.request.body,
+        httpEntry.request.url,
+      );
       requests.push({
         id: httpEntry.id,
         type: 'http',
         name: httpEntry.request.url,
+        graphqlOperationName: gqlName ?? undefined,
         status: httpEntry.status,
         timestamp: httpEntry.timestamp,
         duration: httpEntry.duration,

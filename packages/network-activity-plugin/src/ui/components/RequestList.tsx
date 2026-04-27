@@ -145,7 +145,7 @@ const processNetworkRequests = (
 
     return {
       id: request.id,
-      name: generateName(request.name, showEntirePathAsName),
+      name: request.graphqlOperationName ?? generateName(request.name, showEntirePathAsName),
       status: statusDisplay,
       method: request.method,
       domain,

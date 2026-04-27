@@ -136,6 +136,7 @@ export type ProcessedRequest = {
   id: RequestId;
   type: NetworkEntryType;
   name: string;
+  graphqlOperationName?: string;
   status: HttpStatus | WebSocketStatus | SSEStatus;
   timestamp: Timestamp;
   duration?: number;
