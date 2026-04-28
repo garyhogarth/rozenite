@@ -24,6 +24,8 @@ import { isNumber } from '../../utils/typeChecks';
 type NetworkRequest = {
   id: RequestId;
   name: string;
+  graphqlOperationName: string;
+  graphqlOperationType: string;
   status: string | number;
   method: string;
   domain: string;
@@ -145,7 +147,9 @@ const processNetworkRequests = (
 
     return {
       id: request.id,
-      name: request.graphqlOperationName ?? generateName(request.name, showEntirePathAsName),
+      name: generateName(request.name, showEntirePathAsName),
+      graphqlOperationName: request.graphqlOperationName ?? '',
+      graphqlOperationType: request.graphqlOperationType ?? '',
       status: statusDisplay,
       method: request.method,
       domain,
@@ -170,15 +174,24 @@ const columns = [
   }),
   columnHelper.accessor('name', {
     header: 'Name',
-    cell: ({ row, getValue }) => (
-      <div className="flex-1 min-w-0 truncate" title={row.original.path}>
-        {getValue()}
-
-        {row.original.hasOverride && (
-          <span className="w-2 h-2 rounded-full bg-violet-300 ms-2 inline-block"></span>
-        )}
-      </div>
-    ),
+    cell: ({ row, getValue }) => {
+      const { graphqlOperationName, graphqlOperationType } = row.original;
+      return (
+        <div className="flex-1 min-w-0 truncate" title={row.original.path}>
+          {getValue()}
+          {graphqlOperationName && (
+            <span className="ms-1.5">
+              <span className="text-purple-400 text-xs font-medium">{graphqlOperationType}</span>
+              {' '}
+              <span className="text-gray-300 text-xs">{graphqlOperationName}</span>
+            </span>
+          )}
+          {row.original.hasOverride && (
+            <span className="w-2 h-2 rounded-full bg-violet-300 ms-2 inline-block"></span>
+          )}
+        </div>
+      );
+    },
     sortingFn: 'alphanumeric',
   }),
   columnHelper.accessor('status', {

@@ -124,6 +124,8 @@ export type WebSocketNetworkEntry = {
   error?: string;
   closeCode?: number;
   closeReason?: string;
+  graphqlOperationName?: string;
+  graphqlOperationType?: 'query' | 'mutation' | 'subscription';
 };
 
 /* Shared */
@@ -137,6 +139,7 @@ export type ProcessedRequest = {
   type: NetworkEntryType;
   name: string;
   graphqlOperationName?: string;
+  graphqlOperationType?: 'query' | 'mutation' | 'subscription';
   status: HttpStatus | WebSocketStatus | SSEStatus;
   timestamp: Timestamp;
   duration?: number;

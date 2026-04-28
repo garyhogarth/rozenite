@@ -25,6 +25,40 @@ const MAX_SSE_MESSAGES_PER_CONNECTION = 32;
 
 const STORE_VERSION = 1;
 
+const GQL_OPERATION_RE = /^\s*(query|mutation|subscription)\s+(\w+)/m;
+const GQL_ANONYMOUS_RE = /^\s*(query|mutation|subscription)\b/m;
+
+const extractGqlFromWsMessage = (
+  networkEntries: Map<string, NetworkEntry>,
+  socketId: string,
+  rawData: string,
+): Map<string, NetworkEntry> => {
+  try {
+    const entry = networkEntries.get(socketId);
+    if (!entry || entry.type !== 'websocket') return networkEntries;
+    const wsEntry = entry as WebSocketNetworkEntry;
+    if (wsEntry.graphqlOperationName) return networkEntries; // already set
+
+    const msg = JSON.parse(rawData);
+    // graphql-ws protocol: { type: 'subscribe', payload: { query, operationName? } }
+    if (msg?.type !== 'subscribe' || !msg?.payload?.query) return networkEntries;
+
+    const { query, operationName } = msg.payload as { query: string; operationName?: string };
+    const namedMatch = GQL_OPERATION_RE.exec(query);
+    const anonymousMatch = !namedMatch ? GQL_ANONYMOUS_RE.exec(query) : null;
+    const opType = (namedMatch?.[1] ?? anonymousMatch?.[1]) as 'query' | 'mutation' | 'subscription' | undefined;
+    const opName = operationName ?? namedMatch?.[2] ?? (anonymousMatch ? 'Anonymous' : undefined);
+
+    if (!opType || !opName) return networkEntries;
+
+    const newEntries = new Map(networkEntries);
+    newEntries.set(socketId, { ...wsEntry, graphqlOperationName: opName, graphqlOperationType: opType });
+    return newEntries;
+  } catch {
+    return networkEntries;
+  }
+};
+
 export interface NetworkActivityState {
   // State
   isRecording: boolean;
@@ -398,7 +432,14 @@ export const createNetworkActivityStore = () =>
                   )
                 );
 
-                return { websocketMessages: newMessages };
+                // Extract GraphQL operation from graphql-ws subscribe messages
+                const newEntries = extractGqlFromWsMessage(
+                  state.networkEntries,
+                  socketId,
+                  eventData.data,
+                );
+
+                return { websocketMessages: newMessages, networkEntries: newEntries };
               });
               break;
             }
