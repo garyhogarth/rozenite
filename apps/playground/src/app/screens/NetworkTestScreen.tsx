@@ -9,6 +9,7 @@ import {
   RefreshControl,
   TextInput,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import EventSource from 'react-native-sse';
@@ -139,13 +140,29 @@ const TodoCard: React.FC<{ todo: Todo }> = ({ todo }) => (
   </View>
 );
 
+const GRAPHQL_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
+const GRAPHQL_ENDPOINT = `http://${GRAPHQL_HOST}:4000/graphql`;
+
+type GqlPost = { id: string; title: string; body: string; userId: string };
+type GraphQLResult<T> = { data?: T; errors?: { message: string }[] };
+
 const HTTPTestComponent: React.FC = () => {
   const [activeTab, setActiveTab] = React.useState<
-    'users' | 'posts' | 'todos' | 'slow' | 'unreliable' | 'create' | 'large'
+    'users' | 'posts' | 'todos' | 'slow' | 'unreliable' | 'create' | 'large' | 'graphql'
   >('users');
   const [newPostTitle, setNewPostTitle] = React.useState('');
   const [newPostBody, setNewPostBody] = React.useState('');
   const [useFormData, setUseFormData] = React.useState(false);
+  const [gqlQueryResult, setGqlQueryResult] = React.useState<GqlPost[] | null>(null);
+  const [gqlMutationResult, setGqlMutationResult] = React.useState<GqlPost | null>(null);
+  const [gqlSubscriptionResult, setGqlSubscriptionResult] = React.useState<GqlPost | null>(null);
+  const [gqlQueryLoading, setGqlQueryLoading] = React.useState(false);
+  const [gqlMutationLoading, setGqlMutationLoading] = React.useState(false);
+  const [gqlSubscriptionActive, setGqlSubscriptionActive] = React.useState(false);
+  const [gqlQueryError, setGqlQueryError] = React.useState<string | null>(null);
+  const [gqlMutationError, setGqlMutationError] = React.useState<string | null>(null);
+  const [gqlSubscriptionError, setGqlSubscriptionError] = React.useState<string | null>(null);
+  const gqlSubscriptionRef = React.useRef<EventSource<'next'> | null>(null);
 
   const usersQuery = useUsersQuery();
   const postsQuery = usePostsQuery();
@@ -200,6 +217,109 @@ const HTTPTestComponent: React.FC = () => {
     );
   };
 
+  const runGqlQuery = async () => {
+    setGqlQueryLoading(true);
+    setGqlQueryError(null);
+    setGqlQueryResult(null);
+    try {
+      const response = await fetch(GRAPHQL_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `query GetPosts {
+  posts {
+    id
+    title
+    body
+    userId
+  }
+}`,
+        }),
+      });
+      const json: GraphQLResult<{ posts: GqlPost[] }> = await response.json();
+      if (json.errors?.length) throw new Error(json.errors[0].message);
+      setGqlQueryResult(json.data?.posts ?? []);
+    } catch (e) {
+      setGqlQueryError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setGqlQueryLoading(false);
+    }
+  };
+
+  const runGqlMutation = async () => {
+    setGqlMutationLoading(true);
+    setGqlMutationError(null);
+    setGqlMutationResult(null);
+    try {
+      const response = await fetch(GRAPHQL_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `mutation CreatePost($title: String!, $body: String!, $userId: ID!) {
+  createPost(title: $title, body: $body, userId: $userId) {
+    id
+    title
+    body
+    userId
+  }
+}`,
+          variables: {
+            title: `Test Post ${Date.now()}`,
+            body: 'Created from the GraphQL playground test.',
+            userId: '1',
+          },
+        }),
+      });
+      const json: GraphQLResult<{ createPost: GqlPost }> = await response.json();
+      if (json.errors?.length) throw new Error(json.errors[0].message);
+      setGqlMutationResult(json.data?.createPost ?? null);
+    } catch (e) {
+      setGqlMutationError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setGqlMutationLoading(false);
+    }
+  };
+
+  const toggleGqlSubscription = () => {
+    if (gqlSubscriptionActive) {
+      gqlSubscriptionRef.current?.close();
+      gqlSubscriptionRef.current = null;
+      setGqlSubscriptionActive(false);
+      return;
+    }
+
+    setGqlSubscriptionError(null);
+    setGqlSubscriptionResult(null);
+
+    try {
+      const query = encodeURIComponent(
+        JSON.stringify({ query: 'subscription OnPostCreated { postCreated { id title body userId } }' })
+      );
+      // graphql-yoga serves subscriptions as SSE via GET with query param, using 'next' events
+      const es = new EventSource<'next'>(`${GRAPHQL_ENDPOINT}?query=${query}`);
+      gqlSubscriptionRef.current = es;
+      setGqlSubscriptionActive(true);
+
+      es.addEventListener('next', (event) => {
+        try {
+          const parsed: GraphQLResult<{ postCreated: GqlPost }> = JSON.parse(event.data ?? '{}');
+          if (parsed.data?.postCreated) setGqlSubscriptionResult(parsed.data.postCreated);
+        } catch { /* ignore parse errors */ }
+      });
+
+      es.addEventListener('error', () => {
+        setGqlSubscriptionError('Subscription error — is the mock server running?');
+        setGqlSubscriptionActive(false);
+      });
+    } catch (e) {
+      setGqlSubscriptionError(e instanceof Error ? e.message : 'Unknown error');
+    }
+  };
+
+  React.useEffect(() => {
+    return () => { gqlSubscriptionRef.current?.close(); };
+  }, []);
+
   const renderItem = ({ item }: { item: User | Post | Todo }) => {
     switch (activeTab) {
       case 'users':
@@ -231,6 +351,7 @@ const HTTPTestComponent: React.FC = () => {
           { key: 'unreliable', label: 'Unreliable' },
           { key: 'create', label: 'Create' },
           { key: 'large', label: 'Large File' },
+          { key: 'graphql', label: 'GraphQL' },
         ].map((tab) => (
           <TouchableOpacity
             key={tab.key}
@@ -245,6 +366,7 @@ const HTTPTestComponent: React.FC = () => {
                   | 'unreliable'
                   | 'create'
                   | 'large'
+                  | 'graphql'
               )
             }
           >
@@ -342,7 +464,7 @@ const HTTPTestComponent: React.FC = () => {
         <View style={styles.largeFileContainer}>
           <Text style={styles.largeFileTitle}>Large File Download Test</Text>
           <Text style={styles.largeFileDescription}>
-            Download a ~5MB GeoJSON file to test progress events. 
+            Download a ~5MB GeoJSON file to test progress events.
             Watch the Network Activity DevTools for progress percentage. Lower the emulator&apos;s signal strength for slower downloads to observe progress updates.
           </Text>
           <TouchableOpacity
@@ -375,7 +497,7 @@ const HTTPTestComponent: React.FC = () => {
             </View>
           )}
         </View>
-      ) : (
+      ) : activeTab === 'graphql' ? null : (
         <TouchableOpacity
           style={[
             styles.refetchButton,
@@ -394,7 +516,7 @@ const HTTPTestComponent: React.FC = () => {
     </View>
   );
 
-  if (activeTab === 'large') {
+  if (activeTab === 'large' || activeTab === 'graphql') {
     return (
       <View style={styles.container}>
         <ScrollView
@@ -402,6 +524,95 @@ const HTTPTestComponent: React.FC = () => {
           showsVerticalScrollIndicator={false}
         >
           {renderHeader()}
+          {activeTab === 'graphql' && (
+            <>
+              <View style={styles.graphqlNotice}>
+                <Text style={styles.graphqlNoticeText}>
+                  Requires the mock server — run <Text style={styles.graphqlNoticeCode}>pnpm mock-server</Text> in the playground directory first.
+                </Text>
+              </View>
+
+              <View style={styles.graphqlSection}>
+                <Text style={styles.graphqlSectionTitle}>Query — GetPosts</Text>
+                <Text style={styles.graphqlDescription}>
+                  Fetches European countries from a public GraphQL API.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.graphqlButton, styles.graphqlQueryButton, gqlQueryLoading && styles.graphqlButtonDisabled]}
+                  onPress={runGqlQuery}
+                  disabled={gqlQueryLoading}
+                >
+                  {gqlQueryLoading
+                    ? <ActivityIndicator size="small" color="#ffffff" />
+                    : <Text style={styles.graphqlButtonText}>Run Query</Text>}
+                </TouchableOpacity>
+                {gqlQueryError && <Text style={styles.errorText}>Error: {gqlQueryError}</Text>}
+                {gqlQueryResult && (
+                  <View style={styles.graphqlResults}>
+                    {gqlQueryResult.slice(0, 5).map((p) => (
+                      <View key={p.id} style={styles.graphqlResultRow}>
+                        <View>
+                          <Text style={styles.graphqlResultName}>{p.title}</Text>
+                          <Text style={styles.graphqlResultMeta}>User {p.userId} · ID {p.id}</Text>
+                        </View>
+                      </View>
+                    ))}
+                    {gqlQueryResult.length > 5 && (
+                      <Text style={styles.graphqlResultMeta}>+{gqlQueryResult.length - 5} more</Text>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.graphqlSection}>
+                <Text style={styles.graphqlSectionTitle}>Mutation — CreatePost</Text>
+                <Text style={styles.graphqlDescription}>
+                  Creates a new post on the mock server and returns the created record.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.graphqlButton, styles.graphqlMutationButton, gqlMutationLoading && styles.graphqlButtonDisabled]}
+                  onPress={runGqlMutation}
+                  disabled={gqlMutationLoading}
+                >
+                  {gqlMutationLoading
+                    ? <ActivityIndicator size="small" color="#ffffff" />
+                    : <Text style={styles.graphqlButtonText}>Run Mutation</Text>}
+                </TouchableOpacity>
+                {gqlMutationError && <Text style={styles.errorText}>Error: {gqlMutationError}</Text>}
+                {gqlMutationResult && (
+                  <View style={styles.graphqlResults}>
+                    <Text style={styles.graphqlResultName}>{gqlMutationResult.title}</Text>
+                    <Text style={styles.graphqlResultMeta}>ID {gqlMutationResult.id} · User {gqlMutationResult.userId}</Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.graphqlSection}>
+                <Text style={styles.graphqlSectionTitle}>Subscription — OnPostCreated</Text>
+                <Text style={styles.graphqlDescription}>
+                  Subscribes to new posts over SSE. Run the mutation above while subscribed to see it fire.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.graphqlButton, gqlSubscriptionActive ? styles.graphqlMutationButton : styles.graphqlQueryButton]}
+                  onPress={toggleGqlSubscription}
+                >
+                  <Text style={styles.graphqlButtonText}>
+                    {gqlSubscriptionActive ? 'Unsubscribe' : 'Subscribe'}
+                  </Text>
+                </TouchableOpacity>
+                {gqlSubscriptionError && <Text style={styles.errorText}>Error: {gqlSubscriptionError}</Text>}
+                {gqlSubscriptionActive && !gqlSubscriptionResult && (
+                  <Text style={styles.graphqlResultMeta}>Listening for new posts…</Text>
+                )}
+                {gqlSubscriptionResult && (
+                  <View style={styles.graphqlResults}>
+                    <Text style={styles.graphqlResultName}>{gqlSubscriptionResult.title}</Text>
+                    <Text style={styles.graphqlResultMeta}>ID {gqlSubscriptionResult.id} · User {gqlSubscriptionResult.userId}</Text>
+                  </View>
+                )}
+              </View>
+            </>
+          )}
         </ScrollView>
       </View>
     );
@@ -902,7 +1113,7 @@ const SSETestComponent: React.FC = () => {
 export const NetworkTestScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const [activeTest, setActiveTest] = React.useState<
-    'http' | 'websocket' | 'sse' | 'request-body'
+    'http' | 'websocket' | 'sse'
   >('http');
 
   const renderHeader = () => (
@@ -1458,6 +1669,86 @@ const styles = StyleSheet.create({
   },
   mainTabTextActive: {
     color: '#ffffff',
+  },
+  graphqlNotice: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    padding: 12,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#7C3AED',
+  },
+  graphqlNoticeText: {
+    fontSize: 13,
+    color: '#a0a0a0',
+    lineHeight: 18,
+  },
+  graphqlNoticeCode: {
+    color: '#a78bfa',
+    fontFamily: 'monospace',
+  },
+  graphqlSection: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333333',
+  },
+  graphqlSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 6,
+  },
+  graphqlDescription: {
+    fontSize: 13,
+    color: '#a0a0a0',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  graphqlButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  graphqlQueryButton: {
+    backgroundColor: '#7C3AED',
+  },
+  graphqlMutationButton: {
+    backgroundColor: '#B45309',
+  },
+  graphqlButtonDisabled: {
+    opacity: 0.5,
+  },
+  graphqlButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  graphqlResults: {
+    marginTop: 14,
+    gap: 8,
+  },
+  graphqlResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  graphqlResultEmoji: {
+    fontSize: 20,
+  },
+  graphqlResultName: {
+    fontSize: 14,
+    color: '#ffffff',
+    fontWeight: '500',
+  },
+  graphqlResultMeta: {
+    fontSize: 12,
+    color: '#666666',
   },
   formDataRow: {
     flexDirection: 'row',

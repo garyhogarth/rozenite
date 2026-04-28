@@ -12,7 +12,8 @@
     "web:webpack": "webpack serve --config webpack.config.js --mode development",
     "web:webpack:build": "webpack --config webpack.config.js --mode production",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "mock-server": "tsx mock-server/index.ts"
   },
   "dependencies": {
     "@dr.pogodin/react-native-fs": "^2.36.2",
@@ -87,9 +88,12 @@
     "babel-plugin-react-native-web": "^0.21.2",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~55.0.0",
+    "graphql": "^16.13.2",
+    "graphql-yoga": "^5.21.0",
     "html-webpack-plugin": "^5.6.6",
     "react-test-renderer": "19.2.0",
     "rozenite": "workspace:*",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.2",
     "webpack": "^5.105.4",
     "webpack-cli": "^7.0.2",
